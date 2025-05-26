@@ -15,20 +15,23 @@ export default class Body extends TextBlock {
         // Setup element
         wrapper.appendChild(this.element);
         
-        this.setupElement('text-block-content', {
-            width: '100%',
-            minHeight: '50px',
-            padding: '8px',
-            outline: 'none',
-            border: this.readOnly ? 'none' : '1px solid transparent'
+        this.setupElement("text-block-content", {
+          boxSizing: "border-box",
+          width: "100%",
+          minHeight: "30px",
+          padding: "8px",
+          outline: "none",
+          margin: "0px",
+          border: this.readOnly ? "none" : "1px solid green",
         });
         
-        // Add event listeners
-        this.element.addEventListener('click', this.onClick.bind(this));
-        this.element.addEventListener('input', this.onTextChange.bind(this));
-        this.element.addEventListener('mouseup', this.onMouseUp.bind(this));
-        this.element.addEventListener('keyup', this.onKeyUp.bind(this));
-        this.element.addEventListener('blur', this.hideTooltip.bind(this));
+        // Add event listeners only if not in readOnly mode
+        if (!this.readOnly) {
+            // Force event listeners for editing features
+            this.element.addEventListener('mouseup', this.onMouseUp.bind(this));
+            this.element.addEventListener('keyup', this.onKeyUp.bind(this));
+            this.element.addEventListener('input', this.onTextChange.bind(this));
+        }
     }
 
     onClick() {
@@ -74,7 +77,7 @@ export default class Body extends TextBlock {
             this.selectionTooltip.style.borderRadius = '3px';
             this.selectionTooltip.style.zIndex = '1000';
             
-            // Add formatting buttons
+            // Add formatting buttons with direct event listeners
             const boldBtn = document.createElement('button');
             boldBtn.innerHTML = 'B';
             boldBtn.style.fontWeight = 'bold';
@@ -83,7 +86,11 @@ export default class Body extends TextBlock {
             boldBtn.style.color = '#fff';
             boldBtn.style.border = 'none';
             boldBtn.style.cursor = 'pointer';
-            boldBtn.onclick = () => this.formatText('bold');
+            boldBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // Prevent losing selection
+                console.log('Bold button clicked in Body');
+                this.formatText('bold');
+            });
             
             const italicBtn = document.createElement('button');
             italicBtn.innerHTML = 'I';
@@ -93,7 +100,11 @@ export default class Body extends TextBlock {
             italicBtn.style.color = '#fff';
             italicBtn.style.border = 'none';
             italicBtn.style.cursor = 'pointer';
-            italicBtn.onclick = () => this.formatText('italic');
+            italicBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // Prevent losing selection
+                console.log('Italic button clicked in Body');
+                this.formatText('italic');
+            });
             
             this.selectionTooltip.appendChild(boldBtn);
             this.selectionTooltip.appendChild(italicBtn);
@@ -116,27 +127,58 @@ export default class Body extends TextBlock {
     }
 
     formatText(format: 'bold' | 'italic') {
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return;
-        
-        const range = selection.getRangeAt(0);
-        
-        if (format === 'bold') {
-            document.execCommand('bold', false);
-        } else if (format === 'italic') {
-            document.execCommand('italic', false);
+        console.log(
+          `Body formatText called: ${format}, isContentEditable:`,
+          this.element.isContentEditable
+        );
+
+        // Ensure the element is editable
+        if (!this.element.isContentEditable) {
+          console.warn("Element is not contentEditable");
+          return;
         }
-        
-        // Update text state after formatting
-        this.text = this.element.innerHTML;
-        this.hideTooltip();
+
+        // Make sure we have focus
+        this.element.focus();
+
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+          console.warn("No selection available");
+          return;
+        }
+
+        const range = selection.getRangeAt(0);
+        console.log("Selected text in Body:", range.toString());
+
+        try {
+          let success = false;
+
+          if (format === "bold") {
+            success = document.execCommand("bold", false);
+          } else if (format === "italic") {
+            success = document.execCommand("italic", false);
+          }
+
+          console.log(
+            `Format applied in Body (${format}): ${
+              success ? "success" : "failed"
+            }`
+          );
+
+          // Update text state after formatting
+          this.text = this.element.innerHTML;
+          this.hideTooltip();
+        } catch (e) {
+          console.error("Error applying formatting in Body:", e);
+        }
     }
 
     toJSON() {
         return {
             id: this.element.id,
-            type: 'body',
-            content: this.element.innerHTML
+            type: this.type,
+            content: this.element.innerHTML,
+            level: undefined // 본문에는 level이 필요 없지만, 부모 클래스의 메서드와 호환되도록 명시적으로 추가
         };
     }
 }

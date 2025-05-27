@@ -1,0 +1,1 @@
+async function uploadArticle(title, contents) {}

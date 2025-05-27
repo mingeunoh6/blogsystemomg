@@ -15,7 +15,7 @@
 
 <div class="home-container">
   <header>
-    <h1>블록형 텍스트 에디터 데모</h1>
+    <h1>OTR-AI 텍스트 에디터 데모</h1>
   </header>
   
   <main>
@@ -34,14 +34,14 @@
     {/if}
     
     <div class="card">
-      <h2>저장된 게시글 보기</h2>
+      <h2>게시글 보기</h2>
       <p>에디터로 작성한 게시글을 볼 수 있습니다.</p>
-      <a href="/blog/demo-article" class="button">게시글 보기</a>
+      <a href="/blog" class="button">게시글 보기</a>
     </div>
   </main>
   
   <footer>
-    <p>© 2023 블로그 에디터</p>
+    <p>© 2025 OTR-AI HSAD</p>
   </footer>
 </div>
 

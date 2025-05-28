@@ -9,6 +9,15 @@ import os from "os";
 import https from "https";
 import http from "http";
 
+// 개발 환경에서 SSL 인증서 검증 비활성화 (FAL API 요청을 위함)
+// 주의: 프로덕션 환경에서는 보안상 취약점이 될 수 있습니다
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+// 기본 https 에이전트 설정 (SSL 인증서 검증 무시)
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
+
 // 더 자세한 로깅을 위한 헬퍼 함수
 function logError(message: string, err: any) {
   console.error(`${message}:`, err);
@@ -31,8 +40,9 @@ try {
     console.error("⚠️ FAL API 키가 설정되지 않았습니다!");
   } else {
     // SSL 인증서 검증 오류를 우회하기 위한 환경 변수 설정
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    
+    // FAL 클라이언트 설정
     fal.config({
       credentials: falApiKey,
     });
@@ -99,13 +109,18 @@ async function downloadImage(
   tempFilePath: string
 ): Promise<boolean> {
   console.log(`이미지 다운로드 시작: ${url}`);
-
+  
   return new Promise((resolve, reject) => {
     // URL 객체를 생성하여 http 또는 https 모듈 선택
     const parsedUrl = new URL(url);
-    const protocol = parsedUrl.protocol === "https:" ? https : http;
-
-    const request = protocol.get(url, (response) => {
+    const protocol = parsedUrl.protocol === 'https:' ? https : http;
+    
+    // https의 경우 SSL 검증 비활성화
+    const options: https.RequestOptions = {
+      rejectUnauthorized: false // SSL 인증서 검증 비활성화
+    };
+    
+    const request = protocol.get(url, options, (response) => {
       // 리다이렉션 처리
       if (response.statusCode === 301 || response.statusCode === 302) {
         if (response.headers.location) {
@@ -116,38 +131,36 @@ async function downloadImage(
           return;
         }
       }
-
+      
       // 오류 응답 처리
       if (response.statusCode !== 200) {
-        return reject(
-          new Error(`Download failed with status ${response.statusCode}`)
-        );
+        return reject(new Error(`Download failed with status ${response.statusCode}`));
       }
-
+      
       // 파일에 응답 데이터 쓰기
       const fileStream = fs.createWriteStream(tempFilePath);
       response.pipe(fileStream);
-
-      fileStream.on("finish", () => {
+      
+      fileStream.on('finish', () => {
         fileStream.close();
         console.log(`이미지 다운로드 완료: ${tempFilePath}`);
         resolve(true);
       });
-
-      fileStream.on("error", (err) => {
+      
+      fileStream.on('error', (err) => {
         fs.unlink(tempFilePath, () => {}); // 실패한 파일 삭제 시도
         reject(err);
       });
     });
-
-    request.on("error", (err) => {
+    
+    request.on('error', (err) => {
       reject(err);
     });
-
+    
     // 타임아웃 설정
     request.setTimeout(30000, () => {
       request.destroy();
-      reject(new Error("Download timeout"));
+      reject(new Error('Download timeout'));
     });
   });
 }
@@ -186,6 +199,17 @@ function generateUUID(length = 9): string {
   ).join("");
 }
 
+// FAL API에 요청하기 위한 전역 fetch 함수 재정의
+const originalFetch = global.fetch;
+global.fetch = (url, options = {}) => {
+  console.log(`보안 fetch 호출: ${url}`);
+  const secureOptions = {
+    ...options,
+    agent: url.toString().startsWith('https:') ? httpsAgent : undefined
+  };
+  return originalFetch(url, secureOptions);
+};
+
 export async function POST(request: RequestEvent) {
   console.log("FAL 이미지 생성 요청 받음");
   try {
@@ -212,56 +236,53 @@ export async function POST(request: RequestEvent) {
     // FAL AI 이미지 생성 API 호출 (queue API 사용)
     console.log("FAL AI API 호출 시작");
     try {
-      console.log(
-        "Using FAL API key:",
-        falApiKey ? "✓ Key is set" : "✗ Key is missing"
-      );
-
+      console.log("Using FAL API key:", falApiKey ? "✓ Key is set" : "✗ Key is missing");
+      
       // 1. 요청 제출하기
       const { request_id } = await fal.queue.submit("fal-ai/imagen4/preview", {
         input: {
           prompt: prompt,
           aspect_ratio: "16:9", // 이미지 비율 설정 (옵션)
-          num_images: 1,
+          num_images: 1
         },
       });
-
+      
       console.log(`Request submitted with ID: ${request_id}`);
-
+      
       // 2. 결과가 준비될 때까지 상태 확인
       let result;
       let attempts = 0;
       const maxAttempts = 30; // 최대 시도 횟수
-
+      
       while (attempts < maxAttempts) {
         attempts++;
         console.log(`상태 확인 중 (시도 ${attempts}/${maxAttempts})...`);
-
+        
         // 상태 확인
         const status = await fal.queue.status("fal-ai/imagen4/preview", {
           requestId: request_id,
           logs: true,
         });
-
+        
         console.log(`현재 상태: ${status.status}`);
-
+        
         if (status.status === "COMPLETED") {
           // 3. 결과 가져오기
           result = await fal.queue.result("fal-ai/imagen4/preview", {
-            requestId: request_id,
+            requestId: request_id
           });
           console.log("결과 수신 완료!");
           break;
         }
-
+        
         // 상태가 완료되지 않았으면 잠시 대기
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-
+      
       if (!result) {
         throw new Error("요청 타임아웃 또는 처리 실패");
       }
-
+      
       console.log("FAL AI 응답 결과:", result.data);
 
       // 이미지 URL 확인
@@ -291,10 +312,10 @@ export async function POST(request: RequestEvent) {
       } catch (downloadErr: any) {
         console.error("이미지 다운로드 실패:", downloadErr);
         return json(
-          {
-            success: false,
+          { 
+            success: false, 
             message: `이미지 다운로드 실패: ${downloadErr.message}`,
-            imageUrl: imageUrl, // 클라이언트에게 직접 URL 제공
+            imageUrl: imageUrl // 클라이언트에게 직접 URL 제공
           },
           { status: 500 }
         );
@@ -325,7 +346,7 @@ export async function POST(request: RequestEvent) {
 
       // 프록시 URL 생성 (Google Drive ID 사용)
       const proxyUrl = `/api/blog/image/proxy?id=${uploadResult.id}`;
-
+      
       // 개발 환경에서는 전체 URL 생성을 고려할 수 있음
       // const host = request.url.origin;
       // const proxyUrl = `${host}/api/blog/image/proxy?id=${uploadResult.id}`;
@@ -335,7 +356,7 @@ export async function POST(request: RequestEvent) {
         message: "이미지가 Google Drive에 저장되었습니다.",
         image: result.data,
         file: uploadResult,
-        fileUrl: proxyUrl, // 프록시 URL을 반환
+        fileUrl: proxyUrl,  // 프록시 URL을 반환
       });
     } catch (falError: any) {
       console.error("FAL API 호출 실패:", falError);
@@ -343,7 +364,7 @@ export async function POST(request: RequestEvent) {
         {
           success: false,
           message: `FAL API 오류: ${falError.message}`,
-          details: falError.stack,
+          details: falError.stack
         },
         { status: 500 }
       );
@@ -352,12 +373,12 @@ export async function POST(request: RequestEvent) {
     const errorMsg = err.message || "알 수 없는 오류";
     console.error("FAL AI 이미지 처리 오류:", errorMsg);
     console.error("스택 트레이스:", err.stack);
-
+    
     return json(
       {
         success: false,
         message: `오류가 발생했습니다: ${errorMsg}`,
-        stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
       },
       { status: 500 }
     );

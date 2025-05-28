@@ -201,13 +201,32 @@ function generateUUID(length = 9): string {
 
 // FAL API에 요청하기 위한 전역 fetch 함수 재정의
 const originalFetch = global.fetch;
-global.fetch = (url, options = {}) => {
+global.fetch = async (url, options = {}) => {
   console.log(`보안 fetch 호출: ${url}`);
   const secureOptions = {
     ...options,
-    agent: url.toString().startsWith('https:') ? httpsAgent : undefined
+    agent: url.toString().startsWith("https:") ? httpsAgent : undefined,
   };
-  return originalFetch(url, secureOptions);
+
+  // 최대 3번 재시도
+  let lastError: any;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.log(`Fetch 시도 ${attempt}/3: ${url}`);
+      const response = await originalFetch(url, secureOptions);
+      return response;
+    } catch (err: any) {
+      console.warn(`Fetch 실패 (시도 ${attempt}/3):`, err.message);
+      lastError = err;
+      // 마지막 시도가 아니면 잠시 대기 후 재시도
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt)); // 점점 더 오래 대기
+      }
+    }
+  }
+
+  // 모든 시도 실패 시 마지막 에러 던지기
+  throw lastError;
 };
 
 export async function POST(request: RequestEvent) {

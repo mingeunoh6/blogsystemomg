@@ -2,6 +2,7 @@
     //Chat.svelte
   import { onMount } from "svelte";
   import { returnJSONtypeArticle, downloadArticleJSON, generateAndSaveArticle, autoArticle, type Article } from "$lib/openai/chat"
+  import { reasoningArticleAgent } from "$lib/openai/chatagent"
 
   let userInput = $state('')
   let isLoading = $state(false)
@@ -10,7 +11,34 @@
   let errorMessage = $state('')
   let uploadStatus = $state<{success: boolean, message: string, uuid?: string, link?: string} | null>(null)
   let autoSave = $state(false)
+  let useReasoning = $state(false)
   let aiMessage = $state('')
+  let logs = $state<string[]>([])
+  
+  // Google Drive 링크를 프록시 URL로 변환하는 함수
+  function convertGoogleDriveUrl(url: string | null): string | null {
+    if (!url) return null;
+    
+    // 이미 프록시 URL인 경우 변환하지 않음
+    if (url.includes("/api/blog/image/proxy")) {
+      return url;
+    }
+    
+    // Google Drive 파일 링크 패턴 확인
+    const googleDrivePattern = /drive\.google\.com\/file\/d\/([^/]+)/;
+    const match = url.match(googleDrivePattern);
+    
+    if (match && match[1]) {
+      // 파일 ID 추출
+      const fileId = match[1];
+      console.log("Chat: Google Drive 파일 ID 감지:", fileId);
+      
+      // 프록시 URL로 변환 (상대 경로 사용)
+      return `/api/blog/image/proxy?id=${fileId}`;
+    }
+    
+    return url;
+  }
 
   async function generateArticle() {
     if (!userInput.trim()) {
@@ -25,8 +53,26 @@
       fileName = null
       uploadStatus = null
       aiMessage = ''
+      logs = []
       
-      if (autoSave) {
+      if (useReasoning) {
+        // Reasoning 모델을 사용한 생성
+        logs.push("Reasoning 모델을 사용하여 요청을 처리합니다...");
+        const result = await reasoningArticleAgent(userInput);
+        console.log("Reasoning agent result:", result);
+        
+        if (result.error) {
+          errorMessage = `오류가 발생했습니다: ${result.error}`;
+        } else {
+          aiMessage = result.message || '';
+          logs = result.logs || [];
+          
+          if (result.article && result.fileName) {
+            generatedArticle = result.article;
+            fileName = result.fileName;
+          }
+        }
+      } else if (autoSave) {
         // Function calling으로 자동화된 과정 사용
         const result = await autoArticle(userInput);
         console.log("Auto article result:", result);
@@ -35,6 +81,7 @@
           errorMessage = `오류가 발생했습니다: ${result.error}`;
         } else {
           aiMessage = result.message || '';
+          logs = result.logs || [];
           
           if (result.article && result.fileName) {
             generatedArticle = result.article;
@@ -136,13 +183,20 @@
       ></textarea>
       
       <div class="generate-options">
-        <label class="auto-save-option">
-          <input type="checkbox" bind:checked={autoSave}>
-          <span>AI 자동화 기능 활성화</span>
-        </label>
+        <div class="options-group">
+          <label class="option">
+            <input type="checkbox" bind:checked={autoSave}>
+            <span>AI 자동화 기능</span>
+          </label>
+          
+          <label class="option">
+            <input type="checkbox" bind:checked={useReasoning}>
+            <span>Reasoning 모델 사용</span>
+          </label>
+        </div>
         
         <button 
-          on:click={generateArticle} 
+          onclick={generateArticle} 
           disabled={isLoading} 
           class="generate-btn"
         >
@@ -154,6 +208,17 @@
     {#if errorMessage}
       <div class="error-message">
         {errorMessage}
+      </div>
+    {/if}
+
+    {#if logs.length > 0}
+      <div class="logs-container">
+        <h3>작업 로그</h3>
+        <div class="logs-list">
+          {#each logs as log}
+            <div class="log-item">{log}</div>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -169,11 +234,11 @@
           <h3>생성된 아티클</h3>
           <div class="action-buttons">
             {#if !uploadStatus?.success}
-              <button on:click={uploadToDrive} class="upload-btn" disabled={isLoading}>
+              <button onclick={uploadToDrive} class="upload-btn" disabled={isLoading}>
                 {isLoading ? '업로드 중...' : 'Google Drive에 저장'}
               </button>
             {/if}
-            <button on:click={handleDownload} class="download-btn">
+            <button onclick={handleDownload} class="download-btn">
               JSON 다운로드
             </button>
           </div>
@@ -211,6 +276,24 @@
                       {@html block.content}
                     </div>
                   </div>
+                {:else if block.type === 'image'}
+                  <div class="image-block">
+                    <span class="block-label">이미지</span>
+                    {#if block.imageUrl}
+                      <div class="image-container">
+                        <!-- Google Drive URL을 프록시 URL로 변환 -->
+                        <img src={convertGoogleDriveUrl(block.imageUrl)} alt="블로그 이미지" class="blog-image" />
+                      </div>
+                    {:else}
+                      <div class="image-placeholder">
+                        <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect width="24" height="24" fill="none"/>
+                          <path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3ZM19 19H5V5H19V19ZM13.96 12.29L11.21 15.83L9.25 13.47L6.5 17H17.5L13.96 12.29Z" fill="#666"/>
+                        </svg>
+                        <p class="image-description">이미지 블록 (에디터에서 이미지를 업로드할 수 있습니다)</p>
+                      </div>
+                    {/if}
+                  </div>
                 {/if}
               </div>
             {/each}
@@ -228,7 +311,7 @@
     padding: 20px;
   }
 
-  h2 {
+  h2, h3 {
     text-align: center;
     margin-bottom: 20px;
   }
@@ -255,14 +338,19 @@
     align-items: center;
   }
 
-  .auto-save-option {
+  .options-group {
+    display: flex;
+    gap: 15px;
+  }
+  
+  .option {
     display: flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
   }
-
-  .auto-save-option input[type="checkbox"] {
+  
+  .option input[type="checkbox"] {
     width: 16px;
     height: 16px;
   }
@@ -289,6 +377,30 @@
     background-color: #fdecea;
     border-radius: 4px;
     margin-bottom: 20px;
+  }
+
+  .logs-container {
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+  }
+
+  .logs-list {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .log-item {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    font-family: monospace;
+    font-size: 14px;
+  }
+
+  .log-item:last-child {
+    border-bottom: none;
   }
 
   .ai-message {
@@ -420,5 +532,64 @@
   .body-block .block-content {
     font-size: 16px;
     line-height: 1.6;
+  }
+
+  .image-block {
+    position: relative;
+  }
+  
+  /* 이미지 컨테이너 추가 */
+  .image-container {
+    position: relative;
+    width: 100%;
+    height: 0;
+    padding-bottom: 56.25%; /* 16:9 비율 */
+    background-color: #f5f5f5;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  
+  .blog-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .image-placeholder {
+    position: relative;
+    width: 100%;
+    height: 0;
+    padding-bottom: 56.25%; /* 16:9 비율 */
+    background-color: #f0f0f0;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .image-placeholder svg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 48px;
+    height: 48px;
+    opacity: 0.5;
+  }
+
+  .image-description {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    text-align: center;
+    font-size: 14px;
   }
 </style>

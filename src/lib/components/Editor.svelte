@@ -2,9 +2,15 @@
   import { onMount } from "svelte";
   import Body from '$lib/blocks/text/body';
   import Title from '$lib/blocks/text/title';
+  import ImageBlock from '$lib/blocks/text/image';
+
+  // Define a union type for different block types
+  type BlockData = 
+    | { id: string; type: 'body' | 'title'; content: string; level?: number; }
+    | { id: string; type: 'image'; imageUrl: string | null; };
 
   let editArea: HTMLElement | null = null;
-  let blocks: Array<{id: string, type: string, content: string}> = $state([]);
+  let blocks: BlockData[] = $state([]);
   let isEditorActive = $state(false);
   let articleTitle = $state("제목을 입력하세요");
   let currentFocusedBlock: HTMLElement | null = $state(null);
@@ -16,7 +22,7 @@
   function trackFocusedBlock(e: MouseEvent) {
     // Find the closest parent block wrapper
     const target = e.target as HTMLElement;
-    const blockWrapper = target.closest('.text-block-wrapper, .title-block-wrapper');
+    const blockWrapper = target.closest('.text-block-wrapper, .title-block-wrapper, .image-block-wrapper');
     
     if (blockWrapper) {
       currentFocusedBlock = blockWrapper as HTMLElement;
@@ -40,7 +46,7 @@
       
       if (blockElement) {
         // Find the block wrapper
-        const blockWrapper = blockElement.closest('.text-block-wrapper, .title-block-wrapper');
+        const blockWrapper = blockElement.closest('.text-block-wrapper, .title-block-wrapper, .image-block-wrapper');
         
         if (blockWrapper) {
           // Find the previous block wrapper to focus after deletion
@@ -112,7 +118,8 @@
       } else {
         // Default behavior: add to the end
         const textBlock = new Body(editArea, 'Click to start typing...', false);
-        blocks = [...blocks, textBlock.toJSON()];
+        const blockData = textBlock.toJSON();
+        blocks = [...blocks, { ...blockData, type: 'body' as const }];
       }
     }
   }
@@ -137,7 +144,34 @@
       } else {
         // Default behavior: add to the end
         const titleBlock = new Title(editArea, 'Add Title Here', level, false);
-        blocks = [...blocks, titleBlock.toJSON()];
+        const blockData = titleBlock.toJSON();
+        blocks = [...blocks, { ...blockData, type: 'title' as const }];
+      }
+    }
+  }
+
+  function addImageBlock() {
+    if (editArea) {
+      // If we have a focused block, insert after it
+      if (currentFocusedBlock) {
+        const newBlock = new ImageBlock(editArea, null, false);
+        
+        // Move the created block after the focused block by DOM manipulation
+        const newBlockWrapper = editArea.querySelector(`.image-block-wrapper:last-child`) as HTMLElement;
+        if (newBlockWrapper) {
+          currentFocusedBlock.after(newBlockWrapper);
+          
+          // Update blocks array
+          updateBlocksArray();
+          
+          // Update the focused block to the newly added one
+          currentFocusedBlock = newBlockWrapper;
+        }
+      } else {
+        // Default behavior: add to the end
+        const imageBlock = new ImageBlock(editArea, null, false);
+        const blockData = imageBlock.toJSON();
+        blocks = [...blocks, { id: blockData.id, type: 'image' as const, imageUrl: blockData.imageUrl }];
       }
     }
   }
@@ -145,35 +179,52 @@
   // Function to update blocks array based on current DOM state
   function updateBlocksArray() {
     if (editArea) {
-      const blockElements = editArea.querySelectorAll('.text-block-content, .title-block-content');
+      const blockElements = editArea.querySelectorAll('.text-block-content, .title-block-content, .image-block-content');
       
       // Create new blocks array from current DOM state
       const updatedBlocks = Array.from(blockElements).map(el => {
         const element = el as HTMLElement;
-        const blockType = element.classList.contains('title-block-content') ? 'title' : 'body';
+        const blockType = element.className.includes('title-block') 
+          ? 'title' 
+          : element.className.includes('image-block')
+            ? 'image'
+            : 'body';
         
         // Create basic block data
         const blockData: any = {
           id: element.id,
           type: blockType,
-          content: element.innerHTML
         };
         
-        // Add level information for title blocks
-        if (blockType === 'title') {
-          // Get level from fontSize style (36px -> 2, 24px -> 3, etc.)
-          const fontSize = element.style.fontSize;
-          let level = 1; // Default level
+        // Add type-specific properties
+        if (blockType === 'title' || blockType === 'body') {
+          blockData.content = element.innerHTML;
           
-          if (fontSize) {
-            const size = parseInt(fontSize);
-            if (size >= 40) level = 1;
-            else if (size >= 30) level = 2;
-            else if (size >= 20) level = 3;
-            else level = 4;
+          // Add level information for title blocks
+          if (blockType === 'title') {
+            // Get level from fontSize style (36px -> 2, 24px -> 3, etc.)
+            const fontSize = element.style.fontSize;
+            let level = 1; // Default level
+            
+            if (fontSize) {
+              const size = parseInt(fontSize);
+              if (size >= 40) level = 1;
+              else if (size >= 30) level = 2;
+              else if (size >= 20) level = 3;
+              else level = 4;
+            }
+            
+            blockData.level = level;
           }
-          
-          blockData.level = level;
+        } else if (blockType === 'image') {
+          // For image blocks, find the image element and get its src
+          const wrapper = element.closest('.image-block-wrapper');
+          if (wrapper) {
+            const img = wrapper.querySelector('img');
+            if (img) {
+              blockData.imageUrl = img.src;
+            }
+          }
         }
         
         return blockData;
@@ -257,6 +308,12 @@
       addTitleBlock();
     }
     
+    // Ctrl+I for new image block
+    if (e.ctrlKey && e.key === 'i') {
+      e.preventDefault();
+      addImageBlock();
+    }
+    
     // Ctrl+S to save
     if (e.ctrlKey && e.key === 's') {
       e.preventDefault();
@@ -276,16 +333,19 @@
         <span>T</span> 본문 추가
       </button>
       <button onclick={() => addTitleBlock(1)} title="Add Title Block (Ctrl+H)">
-        <span>H</span> 제목1
+        <span>H1</span> 제목1
       </button>
-        <button onclick={() => addTitleBlock(2)} title="Add Title Block (Ctrl+H)">
-        <span>H</span> 제목2
+      <button onclick={() => addTitleBlock(2)} title="Add Title Block (Ctrl+H)">
+        <span>H2</span> 제목2
       </button>
-        <button onclick={() => addTitleBlock(3)} title="Add Title Block (Ctrl+H)">
-        <span>H</span> 제목3
+      <button onclick={() => addTitleBlock(3)} title="Add Title Block (Ctrl+H)">
+        <span>H3</span> 제목3
       </button>
-        <button onclick={() => addTitleBlock(4)} title="Add Title Block (Ctrl+H)">
-        <span>H</span> 제목4
+      <button onclick={() => addTitleBlock(4)} title="Add Title Block (Ctrl+H)">
+        <span>H4</span> 제목4
+      </button>
+      <button onclick={addImageBlock} title="Add Image Block (Ctrl+I)" class="image-btn">
+        <span>I</span> 이미지 추가
       </button>
     </div>
     <div class="toolbar-group">
@@ -320,7 +380,7 @@
       블록 수: {blocks.length}
     </div>
     <div class="keyboard-shortcuts">
-      단축키: Ctrl+B (본문 추가), Ctrl+H (제목 추가), Ctrl+S (저장)
+      단축키: Ctrl+B (본문 추가), Ctrl+H (제목 추가), Ctrl+I (이미지 추가), Ctrl+S (저장)
     </div>
   </div>
 </div>
@@ -388,6 +448,17 @@
   .save-btn:hover {
     background-color: #43A047 !important;
     border-color: #388E3C !important;
+  }
+  
+  .image-btn {
+    background-color: #2196F3 !important;
+    color: white;
+    border-color: #1E88E5 !important;
+  }
+  
+  .image-btn:hover {
+    background-color: #1E88E5 !important;
+    border-color: #1976D2 !important;
   }
   
   .edit-title-container {

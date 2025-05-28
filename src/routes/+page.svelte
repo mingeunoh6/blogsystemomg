@@ -2,12 +2,6 @@
   import { onMount } from 'svelte';
   import Editor from '$lib/components/Editor.svelte';
   
-  let showEditor = false;
-  
-  function toggleEditor() {
-    showEditor = !showEditor;
-  }
-  
   onMount(() => {
     console.log('Home page mounted');
   });
@@ -15,23 +9,14 @@
 
 <div class="home-container">
   <header>
-    <h1>OTR-AI 텍스트 에디터 데모</h1>
+    <h1>OTR-AI 블록형 블로그 에디터</h1>
+    <p>텍스트, 제목, 이미지 블럭을 사용하여 컨텐츠를 작성하세요. 이미지는 구글 드라이브에 자동으로 업로드됩니다.</p>
   </header>
   
   <main>
-    <div class="card">
-      <h2>에디터 데모</h2>
-      <p>블록형 텍스트 에디터를 사용하여 본문과 제목을 작성해보세요.</p>
-      <button on:click={toggleEditor}>
-        {showEditor ? '에디터 숨기기' : '에디터 보기'}
-      </button>
+    <div class="editor-container">
+      <Editor />
     </div>
-    
-    {#if showEditor}
-      <div class="editor-container">
-        <Editor />
-      </div>
-    {/if}
     
     <div class="card">
       <h2>게시글 보기</h2>
@@ -47,7 +32,7 @@
 
 <style>
   .home-container {
-    max-width: 800px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -61,6 +46,12 @@
   header h1 {
     font-size: 2em;
     color: #333;
+    margin-bottom: 10px;
+  }
+  
+  header p {
+    color: #666;
+    margin-bottom: 20px;
   }
   
   .card {
@@ -68,14 +59,17 @@
     border-radius: 8px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     padding: 20px;
-    margin-bottom: 20px;
+    margin: 20px 0;
   }
   
   .editor-container {
     margin-bottom: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
   }
   
-  button, .button {
+  .button {
     display: inline-block;
     background-color: #4CAF50;
     color: white;
@@ -88,7 +82,7 @@
     transition: background-color 0.3s;
   }
   
-  button:hover, .button:hover {
+  .button:hover {
     background-color: #43A047;
   }
   

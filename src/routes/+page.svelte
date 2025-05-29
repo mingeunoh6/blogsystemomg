@@ -1,9 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Editor from '$lib/components/Editor.svelte';
+  import {getWorldNews} from '$lib/utils/NEWS/newsUtils'
   
-  onMount(() => {
+  let newsData: any = $state(null);
+  let newsError: string | null = $state(null);
+  let isLoading = $state(false);
+  
+  onMount(async () => {
     console.log('Home page mounted');
+
+ 
   });
 </script>
 
@@ -22,6 +29,26 @@
       <h2>게시글 보기</h2>
       <p>에디터로 작성한 게시글을 볼 수 있습니다.</p>
       <a href="/blog" class="button">게시글 보기</a>
+    </div>
+
+    <!-- 뉴스 API 테스트 결과 -->
+    <div class="card">
+      <h2>뉴스 API 테스트</h2>
+      {#if isLoading}
+        <p>로딩 중...</p>
+      {:else if newsError}
+        <div class="error">
+          <h3>오류 발생</h3>
+          <p>{newsError}</p>
+        </div>
+      {:else if newsData}
+        <div class="success">
+          <h3>API 응답 성공</h3>
+          <pre>{JSON.stringify(newsData, null, 2)}</pre>
+        </div>
+      {:else}
+        <p>아직 데이터가 없습니다.</p>
+      {/if}
     </div>
   </main>
   
@@ -91,5 +118,29 @@
     margin-top: 40px;
     color: #666;
     font-size: 14px;
+  }
+  
+  .error {
+    padding: 10px;
+    background-color: #ffecec;
+    border-left: 5px solid #f44336;
+    color: #333;
+  }
+  
+  .success {
+    padding: 10px;
+    background-color: #e7f6e7;
+    border-left: 5px solid #4CAF50;
+    color: #333;
+  }
+  
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: #f5f5f5;
+    padding: 10px;
+    border-radius: 4px;
+    max-height: 400px;
+    overflow-y: auto;
   }
 </style>

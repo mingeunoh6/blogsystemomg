@@ -3,6 +3,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
+import { getWorldNews } from "$lib/utils/NEWS/newsUtils";
 
 // Initialize OpenAI client with environment variable for API key
 const openai = new OpenAI({
@@ -47,6 +48,23 @@ const ArticleSchema = z.object({
 
 // Type for the article structure
 export type Article = z.infer<typeof ArticleSchema>;
+
+// 뉴스 API 결과 타입 정의
+interface NewsItem {
+  news_url: string;
+  news_publisher: string;
+  news_title: string;
+  news_author: string;
+  news_date: string;
+  news_summary: string;
+  news_thumbnail: string;
+}
+
+interface CrawledArticle {
+  url: string;
+  text?: string;
+  error?: string;
+}
 
 /**
  * Simple function to get GPT response
@@ -167,6 +185,13 @@ Title blocks must include a "level" property (1-4) indicating heading size.
 Body blocks include HTML content that can include formatting tags like <b>, <i>, <div>, <br>, etc.
 Image blocks should have the imageUrl property set to null, along with a description comment.
 
+IMPORTANT CITATION RULES:
+- Always cite sources when using news content
+- Use the format "[Source: Publication Name, URL]" after quotes or information
+- For direct quotes, use quotation marks and include the source
+- For paraphrased content, still cite the source at the end of the information
+- When summarizing multiple news sources, cite all of them
+
 IMPORTANT: Ensure your response is valid JSON. No trailing commas, no unescaped quotes in strings, and proper formatting.
 
 RESPOND ONLY WITH VALID JSON in exactly this format with no explanation:
@@ -182,7 +207,7 @@ RESPOND ONLY WITH VALID JSON in exactly this format with no explanation:
     {
       "id": "GhIj4k",
       "type": "body",
-      "content": "Text content with <b>formatting</b>"
+      "content": "Text content with <b>formatting</b> and proper citations [Source: Publication Name, URL]"
     },
     {
       "id": "LmNp5q",
@@ -811,7 +836,16 @@ export async function autoArticle(input: string): Promise<{
         content: `당신은 블로그 아티클을 생성하고 Google Drive에 저장하는 AI 비서입니다.
 사용자의 요청을 분석하고, 다음의 과정을 순차적으로 모두 완료해야 합니다:
 
-1. generateBlogArticle 함수를 호출하여 블로그 글을 생성합니다.
+0. 블로그 글에 최신 뉴스 내용을 담아야겠다고 판단되면, getNews 함수를 호출해 여러 뉴스 데이터를 수집한 다음, 각 뉴스의 URL을 순서대로 readMultipleUrls 함수를 통해 모두 크롤링하세요. 뉴스는 최소 3개 이상 수집 및 반영해야 합니다.
+   
+1. generateBlogArticle 함수를 호출하여 블로그 글을 생성합니다. 최신 뉴스 데이터가 수집되었고 해당 URL의 본문 텍스트도 있는 경우, 반드시 해당 뉴스 내용을 참고하여 블로그 각 섹션에 요약하거나 인용 형태로 반영하세요. 뉴스 요약과 크롤링 결과는 정보를 소개하거나 분석하는 형태로 통합하세요.
+   - 뉴스 본문을 요약하여 블로그 글의 각 섹션에서 관련된 뉴스 정보로 활용하세요.
+   - 반드시 각 뉴스 정보와 인용문 바로 뒤에 "[출처: 언론사명, URL]" 형식으로 출처를 명확하게 표기하세요.
+   - 직접 인용할 경우 인용 부호를 사용하고 출처를 반드시 명시하세요. (예: "인용문" [출처: 언론사명, URL])
+   - 간접 인용이나 정보 활용 시에도 정보의 출처를 문장 끝에 표기하세요. (예: 이런 내용이다. [출처: 언론사명])
+   - 여러 뉴스를 종합할 때는 각 출처를 모두 표기하세요. (예: 여러 전문가들은 이런 견해를 보인다. [출처: A신문, B신문])
+   - 이미지 블록 아래에도 관련 뉴스 출처를 표기하는 본문 블록을 추가하세요.
+
 2. 생성된 블로그 글에 이미지가 필요하다고 판단되면, generateImage 함수를 호출하여 적절한 이미지를 생성합니다.
    - 이미지가 필요한 각 섹션마다 이미지를 위한 상세한 프롬프트를 작성하세요.
    - 이미지 생성 후 받은 링크를 해당 이미지 블록의 imageUrl 필드에 업데이트하세요.
@@ -823,6 +857,8 @@ export async function autoArticle(input: string): Promise<{
       { role: "user", content: input },
     ];
 
+    let news: NewsItem[] = [];
+    let crawlingText: CrawledArticle[] = [];
     let generatedArticle: Article | null = null;
     let fileName: string | null = null;
     let isWorkflowComplete = false;
@@ -836,6 +872,61 @@ export async function autoArticle(input: string): Promise<{
         model: "gpt-4o",
         messages,
         tools: [
+          {
+            type: "function",
+            function: {
+              name: "getNews",
+              description:
+                "Search world news using news api with specific keyword and return news datas",
+              parameters: {
+                type: "object",
+                properties: {
+                  keyword: {
+                    type: "string",
+                    description: "The keyword or subject for news search",
+                  },
+                },
+                required: ["keyword"],
+              },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "readMultipleUrls",
+              description:
+                "Web crawl multiple news URLs and return their content",
+              parameters: {
+                type: "object",
+                properties: {
+                  urls: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "List of news URLs to crawl",
+                  },
+                },
+                required: ["urls"],
+              },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "readUrl",
+              description:
+                "Web Crawling with given url and return text of the url content ",
+              parameters: {
+                type: "object",
+                properties: {
+                  url: {
+                    type: "string",
+                    description: "The url to process the crawling",
+                  },
+                },
+                required: ["url"],
+              },
+            },
+          },
           {
             type: "function",
             function: {
@@ -928,7 +1019,59 @@ export async function autoArticle(input: string): Promise<{
 
         if (functionName === "generateBlogArticle") {
           logs.push("블로그 아티클 생성 중...");
-          const result = await returnJSONtypeArticle(args.topic);
+
+          // 뉴스 데이터와 크롤링 내용을 주제와 함께 전달
+          let fullTopic = args.topic;
+
+          // 뉴스 데이터가 있는 경우, 이를 주제에 포함
+          if (news && news.length > 0) {
+            fullTopic += "\n\n===== 관련 뉴스 데이터 =====\n";
+            news.forEach((item, index) => {
+              fullTopic += `\n[뉴스 #${index + 1}]\n`;
+              fullTopic += `제목: ${item.news_title}\n`;
+              fullTopic += `출처: ${item.news_publisher}\n`;
+              fullTopic += `날짜: ${item.news_date}\n`;
+              fullTopic += `URL: ${item.news_url}\n`;
+              if (item.news_summary) {
+                fullTopic += `요약: ${item.news_summary}\n`;
+              }
+            });
+          }
+
+          // 크롤링 내용이 있는 경우, 이를 주제에 포함
+          if (crawlingText && crawlingText.length > 0) {
+            fullTopic += "\n\n===== 뉴스 본문 내용 =====\n";
+            // 타입 체크를 추가하여 text 속성이 있는 항목만 처리
+            crawlingText.forEach((item: any, index) => {
+              if (item && item.text && typeof item.text === "string") {
+                fullTopic += `\n[뉴스 본문 #${index + 1}] (${
+                  item.url || "출처 없음"
+                })\n`;
+                // 텍스트가 너무 길면 잘라내기 (OpenAI 토큰 제한 고려)
+                const maxLength = 2000;
+                const trimmedText =
+                  item.text.length > maxLength
+                    ? item.text.substring(0, maxLength) + "... (내용 계속)"
+                    : item.text;
+                fullTopic += trimmedText + "\n";
+              }
+            });
+
+            fullTopic += "\n\n===== 블로그 작성 지침 =====\n";
+            fullTopic +=
+              "위 뉴스 내용을 참고하여 블로그 글을 작성하세요. 뉴스의 핵심 내용과 인사이트를 블로그 글에 녹여내고, 반드시 출처도 표기하세요.\n\n";
+            fullTopic += "출처 표기 규칙:\n";
+            fullTopic += '1. 직접 인용 시: "인용문" [출처: 언론사명, URL]\n';
+            fullTopic += "2. 간접 인용 시: 내용 요약 [출처: 언론사명]\n";
+            fullTopic +=
+              "3. 여러 출처 종합 시: 종합된 내용 [출처: A신문, B신문]\n";
+            fullTopic +=
+              "4. 이미지 관련 정보 인용 시 이미지 아래에 출처 블록 추가\n";
+            fullTopic += "5. 모든 뉴스 정보는 반드시 출처를 표기해야 합니다.\n";
+          }
+
+          // 수정된 주제로 블로그 아티클 생성
+          const result = await returnJSONtypeArticle(fullTopic);
           generatedArticle = result.article;
           fileName = result.fileName;
 
@@ -945,6 +1088,90 @@ export async function autoArticle(input: string): Promise<{
             article: generatedArticle,
             fileName: result.fileName,
           };
+        } else if (functionName === "getNews") {
+          logs.push("2주이내 최신 뉴스 검색중...");
+          const result = await getNews(args.keyword);
+
+          news = [];
+
+          if (result && result.data && Array.isArray(result.data)) {
+            for (let i = 0; i < result.data.length; i++) {
+              logs.push(`뉴스 수집중...${i}/${result.data.length}`);
+              let newsData: NewsItem = {
+                news_url: result.data[i].content_url || "",
+                news_publisher: result.data[i].publisher || "",
+                news_title: result.data[i].title || "",
+                news_author: result.data[i].author || "",
+                news_date: result.data[i].published_at || "",
+                news_summary: result.data[i].summary || "",
+                news_thumbnail: result.data[i].thumbnail_url || "",
+              };
+              news.push(newsData);
+            }
+          }
+
+          logs.push("뉴스 수집 완료");
+
+          functionResult = {
+            success: true,
+            news: news,
+          };
+        } else if (functionName === "readUrl") {
+          logs.push("뉴스 기사 훑는 중...");
+          try {
+            const result = await readUrl(args.url);
+
+            // 문자열 결과를 객체 배열로 변환하여 저장
+            crawlingText = [
+              {
+                url: args.url,
+                text: result,
+              },
+            ];
+
+            logs.push("뉴스 기사 확인 완료");
+
+            functionResult = {
+              success: true,
+              newsCrawlingDetail: crawlingText,
+              summary: await summarizeCrawledText(
+                crawlingText as { url: string; text: string }[]
+              ),
+            };
+          } catch (error) {
+            logs.push("뉴스 기사 크롤링 실패");
+            functionResult = {
+              success: false,
+              error: String(error),
+            };
+          }
+        } else if (functionName === "readMultipleUrls") {
+          logs.push("뉴스 기사 훑는 중...");
+          try {
+            const result = await readMultipleUrls(args.urls);
+
+            crawlingText = result.crawledArticles;
+
+            logs.push("뉴스 기사 확인 완료");
+
+            // 크롤링된 항목 중 텍스트가 있는 항목만 필터링
+            const validArticles = result.crawledArticles.filter(
+              (item): item is { url: string; text: string } =>
+                !!item.text && typeof item.text === "string"
+            );
+
+            functionResult = {
+              success: result.success,
+              newsCrawlingDetail: crawlingText,
+              summary: await summarizeCrawledText(validArticles),
+            };
+          } catch (error) {
+            logs.push("뉴스 기사 크롤링 실패");
+            functionResult = {
+              success: false,
+              error: String(error),
+            };
+          }
         } else if (functionName === "generateImage" && generatedArticle) {
           // 이미지 생성 처리
           logs.push(`이미지 생성 중: "${args.prompt}"`);
@@ -1056,4 +1283,175 @@ export async function autoArticle(input: string): Promise<{
       error: err.message,
     };
   }
+}
+
+async function getNews(keyword: string): Promise<{ data: any[] }> {
+  try {
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD 형식
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+    const todaybefore2weeks = twoWeeksAgo.toISOString().split("T")[0];
+    console.log("뉴스 데이터 요청 시작");
+
+    // 뉴스 데이터 요청
+    const response = (await getWorldNews(
+      keyword,
+      todaybefore2weeks,
+      today,
+      3
+    )) as any;
+    console.log("뉴스 데이터 요청 완료:", response);
+
+    // 뉴스 API가 제대로 응답하지 않은 경우 빈 배열 반환
+    if (!response || !response.data) {
+      return { data: [] };
+    }
+
+    return response;
+  } catch (error: any) {
+    console.error("뉴스 데이터 요청 실패:", error);
+    // 오류 발생 시 빈 데이터 반환
+    return { data: [] };
+  }
+}
+
+async function readUrl(url: string) {
+  try {
+    // 프록시 API를 통해 URL 콘텐츠 가져오기
+    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+
+    console.log("프록시를 통해 URL 요청:", url);
+    const response = await fetch(proxyUrl);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = (await response.json()) as {
+      error?: string;
+      content: string;
+    };
+
+    if (result.error) {
+      throw new Error(`프록시 오류: ${result.error}`);
+    }
+
+    const html = result.content;
+
+    // Create a DOM parser to parse the HTML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    // Remove script and style elements
+    const scripts = doc.getElementsByTagName("script");
+    const styles = doc.getElementsByTagName("style");
+    while (scripts.length > 0) scripts[0].remove();
+    while (styles.length > 0) styles[0].remove();
+
+    // Get main content - try common content containers first
+    let content =
+      doc.querySelector("article") ||
+      doc.querySelector("main") ||
+      doc.querySelector("div") ||
+      doc.querySelector(".content") ||
+      doc.querySelector("#content");
+
+    // If no specific content container found, get body text
+    if (!content) {
+      content = doc.body;
+    }
+
+    // Get text content and clean it up
+    let text = content.textContent || "";
+    text = text.replace(/\s+/g, " ").trim(); // Remove extra whitespace
+
+    return text;
+  } catch (error) {
+    console.error("Error crawling URL:", error);
+    throw error;
+  }
+}
+
+async function readMultipleUrls(urls: string[]) {
+  const results = [];
+
+  for (const url of urls) {
+    try {
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxyUrl);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch: ${url}`);
+      }
+
+      const result = await response.json();
+
+      if (result.error) {
+        throw new Error(`Error in content: ${result.error}`);
+      }
+
+      const html = result.content;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+
+      // Clean DOM
+      doc
+        .querySelectorAll("script, style, noscript")
+        .forEach((el) => el.remove());
+
+      let content =
+        doc.querySelector("article") ||
+        doc.querySelector("main") ||
+        doc.querySelector(".content") ||
+        doc.body;
+
+      const text = content?.textContent?.replace(/\s+/g, " ").trim() || "";
+
+      results.push({
+        url,
+        text: text.slice(0, 5000), // 길이 제한 (OpenAI 컨텍스트 대비)
+      });
+    } catch (err) {
+      console.error("readMultipleUrls error:", err);
+      results.push({
+        url,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  return {
+    success: true,
+    crawledArticles: results,
+  };
+}
+
+async function summarizeCrawledText(
+  articles: { url: string; text: string }[]
+): Promise<string> {
+  const summaries = [];
+
+  for (const { url, text } of articles) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are a helpful assistant. Please summarize the following news article in under 100 words in a tone suitable for a blog post. Include a one-line title and mention it's from: ${url}`,
+          },
+          {
+            role: "user",
+            content: text.slice(0, 3000),
+          },
+        ],
+      });
+
+      summaries.push(response.choices[0].message.content || "");
+    } catch (err) {
+      console.error("summarizeCrawledText error:", err);
+    }
+  }
+
+  return summaries.join("\n\n");
 }
